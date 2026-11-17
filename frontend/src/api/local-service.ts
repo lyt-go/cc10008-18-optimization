@@ -1,9 +1,32 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { applyConfigChange, listVerdicts } from '@/api/anomaly-period-service'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
+
+/**
+ * 跨模块更新入口：时段分析（timewindow）的时段配置发生流转时，联动异常检测模块。
+ * 调用链：timewindow 页面 runAction → 本函数 → anomaly-period-service.applyConfigChange。
+ * 只把「当前异常时段判定清单」里确实挂在该配置下的时段列为受影响范围，
+ * 其余时段配置沿用原版本，时段异常联动入口继续复用同一份清单数据。
+ */
+function notifyTimewindowConfigChange(configId: string, nextStatus: string): ActionResult {
+  const linked = listVerdicts().filter((verdict) => verdict.configId === configId)
+  const affectedPeriods = linked.map((verdict) => verdict.periodName)
+  if (affectedPeriods.length === 0) {
+    return { ok: true, message: `时段配置 ${configId} 已切到「${nextStatus}」，暂无异常时段清单需要联动重算` }
+  }
+  const outcome = applyConfigChange({
+    configId,
+    affectedPeriods,
+    // 配置版本在该配置下受影响时段的当前最高版本上抬升一档；
+    // 未受影响时段不会进入这个范围，版本保持原样。
+    version: linked.reduce((max, verdict) => Math.max(max, verdict.version), 0) + 1,
+  })
+  return { ok: outcome.ok, message: outcome.message }
+}
 
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
@@ -53,6 +76,14 @@ export function runAction(key: string, id: number, action: string): ActionResult
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
+  // 跨模块更新落在异常检测：时段配置变更只重算受影响异常时段清单，其余沿用原版本。
+  if (key === 'timewindow') {
+    const linkage = notifyTimewindowConfigChange(String(updated['配置编号'] ?? ''), target)
+    return {
+      ok: true,
+      message: `${meta.entity}已${action}，当前状态「${target}」；${linkage.message}`,
+    }
+  }
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
 }
 

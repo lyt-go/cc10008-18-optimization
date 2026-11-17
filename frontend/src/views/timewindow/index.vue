@@ -65,8 +65,11 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条时段分析记录</span>
+      <span v-if="successMessage" class="ok-text">{{ successMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <AnomalyLinkPanel ref="linkPanel" />
   </section>
 </template>
 
@@ -80,6 +83,7 @@ import {
   runAction as applyAction,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
+import AnomalyLinkPanel from './AnomalyLinkPanel.vue'
 
 const meta = moduleMeta('timewindow')
 const columns = ["配置编号", "时段名称", "起始时分", "结束时分", "星期过滤", "对比基线", "峰值阈值", "异常判定方法"]
@@ -90,6 +94,8 @@ const stats = [{"label": "时段配置总数", "value": 0}, {"label": "已启用
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const successMessage = ref('')
+const linkPanel = ref<InstanceType<typeof AnomalyLinkPanel> | null>(null)
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -114,12 +120,16 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
+  successMessage.value = ''
   const result = applyAction(meta.key, Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  successMessage.value = result.message
   reload()
+  // 时段配置流转已在 local-service 内联动重算，这里复用同一份清单刷新联动入口。
+  linkPanel.value?.reload()
 }
 
 function reload() {
